@@ -45,6 +45,9 @@ jobs:
           trunk --version
 
       - name: Build WebAssembly with Trunk
+        env:
+          CRAFT_FONTS_DIR: ${{ github.workspace }}/craft-fonts
+          CRAFT_FONTS_REQUIRED: "1"
         run: |
           cd apps/wordcraft-web
           trunk build --release
