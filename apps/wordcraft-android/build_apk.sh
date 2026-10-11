@@ -1,17 +1,28 @@
-#!/data/data/com.termux/files/usr/bin/bash
+#!/usr/bin/env bash
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_DIR="$SCRIPT_DIR/app"
 BUILD_DIR="$SCRIPT_DIR/build_standalone"
-ANDROID_JAR="/data/data/com.termux/files/usr/share/java/android.jar"
+
+# Locate android.jar dynamically across Termux, GitHub Actions, and Linux hosts
+if [ -n "$ANDROID_JAR" ] && [ -f "$ANDROID_JAR" ]; then
+    : # Keep user-specified ANDROID_JAR
+elif [ -f "/data/data/com.termux/files/usr/share/java/android.jar" ]; then
+    ANDROID_JAR="/data/data/com.termux/files/usr/share/java/android.jar"
+elif [ -n "$ANDROID_SDK_ROOT" ] && [ -d "$ANDROID_SDK_ROOT/platforms" ]; then
+    ANDROID_JAR=$(ls -d "$ANDROID_SDK_ROOT"/platforms/android-*/android.jar 2>/dev/null | sort -V | tail -n 1)
+elif [ -n "$ANDROID_HOME" ] && [ -d "$ANDROID_HOME/platforms" ]; then
+    ANDROID_JAR=$(ls -d "$ANDROID_HOME"/platforms/android-*/android.jar 2>/dev/null | sort -V | tail -n 1)
+fi
+
 ANDROID_FRAMEWORK="/system/framework/framework-res.apk"
 if [ ! -f "$ANDROID_FRAMEWORK" ]; then
     ANDROID_FRAMEWORK="$ANDROID_JAR"
 fi
 
-if [ ! -f "$ANDROID_JAR" ]; then
-    echo "[-] android.jar not found at $ANDROID_JAR"
+if [ -z "$ANDROID_JAR" ] || [ ! -f "$ANDROID_JAR" ]; then
+    echo "[-] android.jar not found (checked Termux, ANDROID_SDK_ROOT, and ANDROID_HOME)"
     exit 1
 fi
 

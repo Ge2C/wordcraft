@@ -1,0 +1,115 @@
+name: Build Android Assets and APK
+
+on:
+  push:
+    branches: [ feature/android-app ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build WebAssembly and APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout wordcraft
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Check out craft-fonts
+        uses: actions/checkout@v4
+        with:
+          repository: storytold/craft-fonts
+          ref: 8dcdacd5153e64560d109541a47d806f26f048c0
+          path: craft-fonts
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Cargo dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: android-web-wasm
+
+      - name: Install trunk
+        run: |
+          TRUNK_VERSION="0.21.14"
+          curl -fsSL "https://github.com/trunk-rs/trunk/releases/download/v${TRUNK_VERSION}/trunk-x86_64-unknown-linux-gnu.tar.gz" \
+            | tar -xz -C "$HOME/.cargo/bin" trunk
+          trunk --version
+
+      - name: Build WebAssembly with Trunk
+        run: |
+          cd apps/wordcraft-web
+          trunk build --release
+
+      - name: Sync WebAssembly assets to Android project
+        run: |
+          ASSETS_DIR="apps/wordcraft-android/app/src/main/assets/wordcraft"
+          DIST_DIR="dist/web"
+
+          # Find newly generated JS and WASM files
+          NEW_JS=$(basename $(ls ${DIST_DIR}/wordcraft-web-*.js | head -n 1))
+          NEW_WASM=$(basename $(ls ${DIST_DIR}/wordcraft-web-*_bg.wasm | head -n 1))
+
+          echo "New JS: ${NEW_JS}"
+          echo "New WASM: ${NEW_WASM}"
+
+          # Remove old WASM and JS files from assets
+          rm -f ${ASSETS_DIR}/wordcraft-web-*.js
+          rm -f ${ASSETS_DIR}/wordcraft-web-*_bg.wasm
+
+          # Copy new files
+          cp ${DIST_DIR}/${NEW_JS} ${ASSETS_DIR}/
+          cp ${DIST_DIR}/${NEW_WASM} ${ASSETS_DIR}/
+
+          # Update import statements in index.html
+          sed -i "s|import init, \* as bindings from '\./wordcraft-web-.*\.js';|import init, * as bindings from './${NEW_JS}';|g" ${ASSETS_DIR}/index.html
+          sed -i "s|const wasm = await init({ module_or_path: '\./wordcraft-web-.*_bg\.wasm' });|const wasm = await init({ module_or_path: './${NEW_WASM}' });|g" ${ASSETS_DIR}/index.html
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Build Android APK
+        run: |
+          cd apps/wordcraft-android
+          # Locate Android build tools on the runner
+          BUILD_TOOLS_DIR=$(ls -d ${ANDROID_SDK_ROOT}/build-tools/* | sort -V | tail -n 1)
+          export PATH="${BUILD_TOOLS_DIR}:${PATH}"
+          echo "Using Android Build Tools at: ${BUILD_TOOLS_DIR}"
+
+          bash build_apk.sh
+
+      - name: Upload Web Assets Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wordcraft-web-dist
+          path: dist/web/
+
+      - name: Upload Release APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wordcraft-release-apk
+          path: apps/wordcraft-android/build_standalone/wordcraft-release.apk
+
+      - name: Commit updated assets to branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add apps/wordcraft-android/app/src/main/assets/wordcraft/
+          if git diff --staged --quiet; then
+            echo "No asset changes to commit."
+          else
+            git commit -m "chore(assets): update webassembly bundle with mobile UI optimizations"
+            git push origin feature/android-app
+          fi
+        continue-on-error: true
