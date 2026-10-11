@@ -397,10 +397,23 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
     let notch = crate::scroll::notch_px(app.canvas.scale / PX_PER_PT);
     let opts = ui.ctx().options(|o| o.input_options);
     let mut delta = ui.input(|i| app.canvas.wheel.frame(i, &opts, hovered, notch, area.height()));
-    if cfg!(target_arch = "wasm32") && app.canvas.obj_drag.is_none() {
+    if cfg!(target_arch = "wasm32") && app.canvas.obj_drag.is_none() && ui.ctx().dragged_id().is_none() {
         let p_delta = ui.input(|i| {
             if i.pointer.is_decidedly_dragging() && i.pointer.primary_down() {
-                i.pointer.delta()
+                let raw_delta = i.pointer.delta();
+                if let Some(origin) = i.pointer.press_origin() {
+                    let in_right_edge = origin.x >= area.max.x - 36.0;
+                    let in_bottom_edge = origin.y >= area.max.y - 32.0;
+                    if in_right_edge {
+                        egui::vec2(0.0, raw_delta.y)
+                    } else if in_bottom_edge {
+                        egui::vec2(raw_delta.x, 0.0)
+                    } else {
+                        raw_delta
+                    }
+                } else {
+                    raw_delta
+                }
             } else {
                 egui::Vec2::ZERO
             }
@@ -412,7 +425,7 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
     let mut scroll_area = egui::ScrollArea::both()
         .id_salt("canvas_scroll")
         .auto_shrink([false, false])
-        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
+        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded)
         .scroll_source(egui::scroll_area::ScrollSource { mouse_wheel: false, ..Default::default() });
     if delta != egui::Vec2::ZERO {
         let before = app.canvas.scroll_offset;
