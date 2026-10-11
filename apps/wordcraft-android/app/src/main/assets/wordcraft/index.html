@@ -35,13 +35,13 @@
       }
 
       var scale = computeAdaptiveScale();
-      document.write('<meta name="viewport" content="width=device-width, initial-scale=' + scale + ', minimum-scale=' + scale + ', maximum-scale=2.0, user-scalable=yes">');
+      document.write('<meta name="viewport" content="width=device-width, initial-scale=' + scale + ', minimum-scale=' + scale + ', maximum-scale=2.0, user-scalable=yes, viewport-fit=cover">');
 
       window.addEventListener('resize', function() {
         var meta = document.querySelector('meta[name="viewport"]');
         if (meta) {
           var s = computeAdaptiveScale();
-          meta.content = 'width=device-width, initial-scale=' + s + ', minimum-scale=' + s + ', maximum-scale=2.0, user-scalable=yes';
+          meta.content = 'width=device-width, initial-scale=' + s + ', minimum-scale=' + s + ', maximum-scale=2.0, user-scalable=yes, viewport-fit=cover';
         }
       });
     })();

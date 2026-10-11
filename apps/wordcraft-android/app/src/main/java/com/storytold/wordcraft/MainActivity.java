@@ -1,6 +1,7 @@
 package com.storytold.wordcraft;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.ActivityNotFoundException;
 import android.content.ContentValues;
 import android.content.Context;
@@ -48,12 +49,18 @@ public class MainActivity extends Activity {
     private static final String TAG = "WordCraft";
     private static final String HOST_DOMAIN = "wordcraft.app";
     private static final int FILE_CHOOSER_REQUEST_CODE = 1001;
+    private static final int SAVE_AS_REQUEST_CODE = 1002;
+    private static final int EXPORT_REQUEST_CODE = 1003;
 
     private WebView webView;
     private ValueCallback<Uri[]> filePathCallback;
     private Uri activeDocumentUri = null;
     private String activeDocumentName = null;
     private boolean isChoosingImage = false;
+
+    private byte[] pendingSaveBytes = null;
+    private String pendingSaveFilename = null;
+    private String pendingSaveMimeType = null;
 
     public class BlobDownloadBridge {
         @JavascriptInterface
@@ -360,6 +367,88 @@ public class MainActivity extends Activity {
         return false;
     }
 
+    private String resolveMimeType(String filename, String mimeType) {
+        if (mimeType != null && !mimeType.isEmpty() && !mimeType.equals("application/octet-stream")) {
+            return mimeType;
+        }
+        if (filename == null) return "application/octet-stream";
+        String lower = filename.toLowerCase();
+        if (lower.endsWith(".docx")) return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+        if (lower.endsWith(".docm")) return "application/vnd.ms-word.document.macroEnabled.12";
+        if (lower.endsWith(".dotx")) return "application/vnd.openxmlformats-officedocument.wordprocessingml.template";
+        if (lower.endsWith(".dotm")) return "application/vnd.ms-word.template.macroEnabled.12";
+        if (lower.endsWith(".pdf")) return "application/pdf";
+        if (lower.endsWith(".odt")) return "application/vnd.oasis.opendocument.text";
+        if (lower.endsWith(".rtf")) return "application/rtf";
+        if (lower.endsWith(".html")) return "text/html";
+        if (lower.endsWith(".txt")) return "text/plain";
+        if (lower.endsWith(".md")) return "text/markdown";
+        if (lower.endsWith(".tex")) return "application/x-tex";
+        if (lower.endsWith(".png")) return "image/png";
+        return "application/octet-stream";
+    }
+
+    private void launchSavePicker(byte[] bytes, String filename, String mimeType, boolean isSaveAs) {
+        pendingSaveBytes = bytes;
+        pendingSaveFilename = filename;
+        pendingSaveMimeType = mimeType;
+
+        Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType(mimeType != null && !mimeType.isEmpty() ? mimeType : "*/*");
+        intent.putExtra(Intent.EXTRA_TITLE, filename);
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION 
+                | Intent.FLAG_GRANT_WRITE_URI_PERMISSION 
+                | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+        int reqCode = isSaveAs ? SAVE_AS_REQUEST_CODE : EXPORT_REQUEST_CODE;
+        try {
+            startActivityForResult(intent, reqCode);
+        } catch (ActivityNotFoundException e) {
+            Log.e(TAG, "Cannot launch ACTION_CREATE_DOCUMENT", e);
+            Toast.makeText(this, "Cannot open storage picker", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private void handleSaveAsResult(int resultCode, Intent data, boolean updateActiveDoc) {
+        byte[] bytes = pendingSaveBytes;
+        String cleanName = pendingSaveFilename;
+        pendingSaveBytes = null;
+        pendingSaveFilename = null;
+        pendingSaveMimeType = null;
+
+        if (resultCode != Activity.RESULT_OK || data == null || bytes == null) {
+            return;
+        }
+
+        Uri uri = data.getData();
+        if (uri == null && data.getClipData() != null && data.getClipData().getItemCount() > 0) {
+            uri = data.getClipData().getItemAt(0).getUri();
+        }
+        if (uri == null) return;
+
+        try {
+            final int takeFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION;
+            getContentResolver().takePersistableUriPermission(uri, takeFlags);
+        } catch (Exception e) {
+            Log.w(TAG, "takePersistableUriPermission: " + e.getMessage());
+        }
+
+        if (writeBytesToUri(uri, bytes)) {
+            String displayName = queryDisplayName(uri);
+            if (displayName == null || displayName.isEmpty()) {
+                displayName = cleanName;
+            }
+            if (updateActiveDoc && isDocumentFileName(displayName)) {
+                activeDocumentUri = uri;
+                activeDocumentName = displayName;
+            }
+            final String toastMsg = updateActiveDoc ? ("Saved as: " + displayName) : ("Exported: " + displayName);
+            runOnUiThread(() -> Toast.makeText(MainActivity.this, toastMsg, Toast.LENGTH_SHORT).show());
+        } else {
+            runOnUiThread(() -> Toast.makeText(MainActivity.this, "Failed to write file", Toast.LENGTH_SHORT).show());
+        }
+    }
+
     private void saveDocumentDirect(String base64Data, String filename, String mimeType) {
         try {
             if (base64Data == null || base64Data.isEmpty()) {
@@ -374,71 +463,76 @@ public class MainActivity extends Activity {
             if (filename == null || filename.isEmpty() || filename.equals("downloadfile")) {
                 filename = (activeDocumentName != null) ? activeDocumentName : "wordcraft_document.docx";
             }
-            if (mimeType == null || mimeType.isEmpty() || mimeType.equals("application/octet-stream")) {
-                if (filename.endsWith(".docx")) {
-                    mimeType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-                } else if (filename.endsWith(".pdf")) {
-                    mimeType = "application/pdf";
-                } else {
-                    mimeType = "application/octet-stream";
-                }
+
+            // Detect and strip intent tags
+            String intentType = "auto";
+            if (filename.startsWith("saveas-")) {
+                intentType = "saveas";
+                filename = filename.substring("saveas-".length());
+            } else if (filename.startsWith("export-")) {
+                intentType = "export";
+                filename = filename.substring("export-".length());
+            } else if (filename.startsWith("save-")) {
+                intentType = "save";
+                filename = filename.substring("save-".length());
             }
 
-            // 1. Direct in-place overwrite if an active document URI exists and types match
-            if (activeDocumentUri != null && activeDocumentName != null) {
-                if (isDocumentFileName(activeDocumentName) && isCompatibleDocumentExtension(activeDocumentName, filename)) {
+            final String cleanFilename = filename;
+            final String resolvedMime = resolveMimeType(cleanFilename, mimeType);
+
+            // 1. Explicit Save As tag
+            if ("saveas".equals(intentType)) {
+                runOnUiThread(() -> launchSavePicker(bytes, cleanFilename, resolvedMime, true));
+                return;
+            }
+
+            // 2. Explicit Export tag OR non-docx format (e.g. .pdf, .odt, .rtf, .html, .txt, .png)
+            if ("export".equals(intentType) || (!cleanFilename.endsWith(".docx") && !cleanFilename.endsWith(".docm"))) {
+                runOnUiThread(() -> launchSavePicker(bytes, cleanFilename, resolvedMime, false));
+                return;
+            }
+
+            // 3. Explicit Save tag
+            if ("save".equals(intentType)) {
+                if (activeDocumentUri != null && activeDocumentName != null && isDocumentFileName(activeDocumentName)) {
                     if (writeBytesToUri(activeDocumentUri, bytes)) {
                         final String docName = activeDocumentName;
                         runOnUiThread(() -> Toast.makeText(MainActivity.this, "Saved: " + docName, Toast.LENGTH_SHORT).show());
                         return;
                     }
                 }
+                // If no active document open yet: launch Save As picker for initial save
+                runOnUiThread(() -> launchSavePicker(bytes, cleanFilename, resolvedMime, true));
+                return;
             }
 
-            // 2. Otherwise create new document in Downloads via MediaStore
-            boolean saved = false;
-            try {
-                ContentValues values = new ContentValues();
-                values.put("_display_name", filename);
-                values.put("mime_type", mimeType);
-                values.put("relative_path", Environment.DIRECTORY_DOWNLOADS);
-
-                Uri downloadsUri = Uri.parse("content://media/external/downloads");
-                Uri uri = getContentResolver().insert(downloadsUri, values);
-                if (uri != null) {
-                    if (writeBytesToUri(uri, bytes)) {
-                        if (isDocumentFileName(filename)) {
-                            activeDocumentUri = uri;
-                            activeDocumentName = filename;
-                        }
-                        saved = true;
-                    }
-                }
-            } catch (Exception e) {
-                Log.w(TAG, "MediaStore insert failed, falling back to direct write", e);
+            // 4. Untagged .docx fallback (e.g. current precompiled WASM build)
+            if (activeDocumentUri == null) {
+                // New document never saved before: launch Save As picker for initial save
+                runOnUiThread(() -> launchSavePicker(bytes, cleanFilename, resolvedMime, true));
+                return;
             }
 
-            // 3. Fallback to direct Downloads folder write if needed
-            if (!saved) {
-                File dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
-                if (!dir.exists()) {
-                    dir.mkdirs();
-                }
-                File file = new File(dir, filename);
-                try (FileOutputStream fos = new FileOutputStream(file)) {
-                    fos.write(bytes);
-                    fos.flush();
-                    saved = true;
-                    if (isDocumentFileName(filename)) {
-                        activeDocumentName = filename;
-                    }
-                }
-            }
-
-            final String finalName = (activeDocumentName != null) ? activeDocumentName : filename;
+            // Active document exists and save intent is untagged: prompt user to Overwrite or Save As
+            final String activeName = activeDocumentName != null ? activeDocumentName : cleanFilename;
             runOnUiThread(() -> {
-                Toast.makeText(MainActivity.this, "Saved: " + finalName, Toast.LENGTH_SHORT).show();
+                new AlertDialog.Builder(MainActivity.this)
+                        .setTitle("Save Document")
+                        .setMessage("Save changes to \"" + activeName + "\" or save as a new copy?")
+                        .setPositiveButton("Overwrite", (dialog, which) -> {
+                            if (writeBytesToUri(activeDocumentUri, bytes)) {
+                                Toast.makeText(MainActivity.this, "Saved: " + activeName, Toast.LENGTH_SHORT).show();
+                            } else {
+                                Toast.makeText(MainActivity.this, "Failed to overwrite document", Toast.LENGTH_SHORT).show();
+                            }
+                        })
+                        .setNeutralButton("Save As Copy...", (dialog, which) -> {
+                            launchSavePicker(bytes, cleanFilename, resolvedMime, true);
+                        })
+                        .setNegativeButton("Cancel", null)
+                        .show();
             });
+
         } catch (Exception e) {
             Log.e(TAG, "Save document error", e);
             runOnUiThread(() -> {
@@ -537,7 +631,11 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        if (requestCode == FILE_CHOOSER_REQUEST_CODE) {
+        if (requestCode == SAVE_AS_REQUEST_CODE) {
+            handleSaveAsResult(resultCode, data, true);
+        } else if (requestCode == EXPORT_REQUEST_CODE) {
+            handleSaveAsResult(resultCode, data, false);
+        } else if (requestCode == FILE_CHOOSER_REQUEST_CODE) {
             if (filePathCallback == null) return;
             Uri[] results = null;
             if (resultCode == Activity.RESULT_OK && data != null) {
