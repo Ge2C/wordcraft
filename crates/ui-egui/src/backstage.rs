@@ -21,9 +21,11 @@ const PAGES: [(&str, &str); 9] = [
 pub fn show(app: &mut WordApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let mac = app.integrated_titlebar;
+    let pad_left = if cfg!(target_arch = "wasm32") { 20 } else { 0 };
+    let nav_w = if cfg!(target_arch = "wasm32") { 220.0 } else { 200.0 };
     egui::Panel::left("backstage_nav")
-        .exact_size(200.0)
-        .frame(egui::Frame::NONE.fill(APP_COLOR).inner_margin(egui::Margin { left: 0, right: 0, top: if mac { 0 } else { 12 }, bottom: 12 }))
+        .exact_size(nav_w)
+        .frame(egui::Frame::NONE.fill(APP_COLOR).inner_margin(egui::Margin { left: pad_left, right: 0, top: if mac { 0 } else { 12 }, bottom: 12 }))
         .show(ui, |ui| {
             let back = if mac {
                 // macOS (#222): the Backstage covers the title bar, so its top band is the title
@@ -85,14 +87,19 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
                 }
             }
             ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
-                for (label, id) in [("About", "about"), ("Discord community", "discord")] {
+                let items: &[(&str, &str)] = if cfg!(target_arch = "wasm32") {
+                    &[("About", "about")]
+                } else {
+                    &[("About", "about"), ("Discord community", "discord")]
+                };
+                for (label, id) in items {
                     let (r, resp) = ui.allocate_exact_size(vec2(200.0, 32.0), Sense::click());
                     if resp.hovered() {
                         ui.painter().rect_filled(r, 0.0, egui::Color32::from_white_alpha(26));
                     }
                     ui.painter().text(pos2(r.min.x + 22.0, r.center().y), Align2::LEFT_CENTER, tl!(label), regular(13.0), egui::Color32::WHITE);
                     if resp.clicked() {
-                        if id == "discord" {
+                        if *id == "discord" {
                             let _ = app.run("ui.discord", json!({}));
                         } else {
                             app.dialog = crate::dialogs::Dialog::open("about", app);
@@ -376,14 +383,16 @@ fn options_page(app: &mut WordApp, ui: &mut Ui) {
     });
     theme_picker(app, ui);
     // The browser can't write to the user's files, so AutoSave can't be turned on there (#176).
-    let browser = app.autosave_block() == Some(crate::AutoSaveBlock::Browser);
-    let mut autosave = app.autosave && !browser;
-    let r = ui.add_enabled(!browser, egui::Checkbox::new(&mut autosave, tl!("AutoSave documents you have saved in WordCraft")));
-    if browser {
-        r.on_disabled_hover_text(crate::AutoSaveBlock::Browser.reason());
-    } else if r.changed() {
-        app.autosave = autosave;
-        app.session.autosave = autosave;
+    if !cfg!(target_arch = "wasm32") && app.services.download.is_none() {
+        let browser = app.autosave_block() == Some(crate::AutoSaveBlock::Browser);
+        let mut autosave = app.autosave && !browser;
+        let r = ui.add_enabled(!browser, egui::Checkbox::new(&mut autosave, tl!("AutoSave documents you have saved in WordCraft")));
+        if browser {
+            r.on_disabled_hover_text(crate::AutoSaveBlock::Browser.reason());
+        } else if r.changed() {
+            app.autosave = autosave;
+            app.session.autosave = autosave;
+        }
     }
     let mut dark_page = app.session.view.dark_mode;
     if ui
@@ -393,7 +402,9 @@ fn options_page(app: &mut WordApp, ui: &mut Ui) {
     {
         let _ = app.run("view.darkMode", json!({"value": dark_page}));
     }
-    ui.checkbox(&mut app.ui.show_discord, tl!("Show the community button in the title bar"));
+    if !cfg!(target_arch = "wasm32") {
+        ui.checkbox(&mut app.ui.show_discord, tl!("Show the community button in the title bar"));
+    }
     ui.add_space(10.0);
     ui.label(egui::RichText::new(tl!("Display")).font(semibold(15.0)));
     let mut marks = app.session.view.marks;

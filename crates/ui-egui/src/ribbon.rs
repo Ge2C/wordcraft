@@ -72,9 +72,11 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
         }
     }
     // Tab strip.
+    let tab_left = if cfg!(target_arch = "wasm32") { 24 } else { 8 };
+    let tab_right = if cfg!(target_arch = "wasm32") { 24 } else { 10 };
     egui::Panel::top("tabs")
         .exact_size(30.0)
-        .frame(egui::Frame::NONE.fill(t.tab_strip).inner_margin(egui::Margin { left: 8, right: 10, top: 0, bottom: 0 }))
+        .frame(egui::Frame::NONE.fill(t.tab_strip).inner_margin(egui::Margin { left: tab_left, right: tab_right, top: 0, bottom: 0 }))
         .show(ui, |ui| {
             ui.horizontal_centered(|ui| {
                 ui.spacing_mut().item_spacing = vec2(2.0, 0.0);
@@ -111,22 +113,24 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     // Share, Editing mode, Comments.
-                    let share = tl!("Share");
-                    let share_w = ui.ctx().fonts_mut(|f| f.layout_no_wrap(share.to_string(), medium(12.0), t.text).size().x);
-                    let (r, resp) = ui.allocate_exact_size(vec2((share_w + 36.0).max(74.0), 24.0), Sense::click());
-                    ui.painter().rect_filled(r, 4.0, if resp.hovered() { t.accent_text } else { t.accent });
-                    icons::paint(
-                        ui.painter(),
-                        Rect::from_center_size(pos2(r.min.x + 14.0, r.center().y), vec2(14.0, 14.0)),
-                        "share",
-                        egui::Color32::WHITE,
-                        egui::Color32::WHITE,
-                    );
-                    ui.painter().text(pos2(r.min.x + 26.0, r.center().y), Align2::LEFT_CENTER, share, medium(12.0), egui::Color32::WHITE);
-                    if resp.on_hover_text(tl!("Export a copy to share (PDF, Word document)")).clicked() {
-                        let _ = app.run("ui.backstage", json!({"value": true, "page": "export"}));
+                    if !cfg!(target_arch = "wasm32") {
+                        let share = tl!("Share");
+                        let share_w = ui.ctx().fonts_mut(|f| f.layout_no_wrap(share.to_string(), medium(12.0), t.text).size().x);
+                        let (r, resp) = ui.allocate_exact_size(vec2((share_w + 36.0).max(74.0), 24.0), Sense::click());
+                        ui.painter().rect_filled(r, 4.0, if resp.hovered() { t.accent_text } else { t.accent });
+                        icons::paint(
+                            ui.painter(),
+                            Rect::from_center_size(pos2(r.min.x + 14.0, r.center().y), vec2(14.0, 14.0)),
+                            "share",
+                            egui::Color32::WHITE,
+                            egui::Color32::WHITE,
+                        );
+                        ui.painter().text(pos2(r.min.x + 26.0, r.center().y), Align2::LEFT_CENTER, share, medium(12.0), egui::Color32::WHITE);
+                        if resp.on_hover_text(tl!("Export a copy to share (PDF, Word document)")).clicked() {
+                            let _ = app.run("ui.backstage", json!({"value": true, "page": "export"}));
+                        }
+                        ui.add_space(6.0);
                     }
-                    ui.add_space(6.0);
                     let track = app.session.doc.settings.track_changes;
                     let mode = crate::widgets::icon_text_button(
                         ui,
@@ -154,10 +158,11 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
     if app.ui.ribbon_collapsed {
         return;
     }
+    let ribbon_margin_x = if cfg!(target_arch = "wasm32") { 20 } else { 8 };
     egui::Panel::top("ribbon")
         .exact_size(CONTENT_H + LABEL_H + 10.0)
         .frame(
-            egui::Frame::NONE.fill(t.ribbon).inner_margin(egui::Margin { left: 8, right: 8, top: 4, bottom: 4 }).stroke(Stroke::new(1.0, t.border)),
+            egui::Frame::NONE.fill(t.ribbon).inner_margin(egui::Margin { left: ribbon_margin_x, right: ribbon_margin_x, top: 4, bottom: 4 }).stroke(Stroke::new(1.0, t.border)),
         )
         .show(ui, |ui| {
             let scroll = egui::ScrollArea::horizontal().scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden).show(ui, |ui| {
@@ -1199,7 +1204,9 @@ fn view(app: &mut WordApp, ui: &mut Ui) {
 fn help(app: &mut WordApp, ui: &mut Ui) {
     group(ui, "Help", None, app, |ui, app| {
         big(ui, app, "help", "Help", "ui.dialog", json!({"name": "about"}), false);
-        big(ui, app, "discord", "Community\nDiscord", "ui.discord", json!({}), false);
+        if !cfg!(target_arch = "wasm32") {
+            big(ui, app, "discord", "Community\nDiscord", "ui.discord", json!({}), false);
+        }
     });
     group(ui, "Agents", None, app, |ui, app| {
         big(ui, app, "macros", "Commands", "ui.dialog", json!({"name": "commands"}), false);

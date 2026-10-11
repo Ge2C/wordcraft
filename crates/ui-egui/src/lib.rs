@@ -138,7 +138,7 @@ impl Default for UiState {
             theme: theme::Appearance::default(),
             legacy_dark: None,
             nav_tab: "headings".into(),
-            show_discord: true,
+            show_discord: false,
             author: String::new(),
             window: None,
             language: i18n::AUTO.into(),
@@ -393,8 +393,13 @@ impl WordApp {
             let password =
                 if matches!(id, "file.save" | "file.saveAs") { self.session.password.as_ref().map(wordcraft_engine::Password::as_str) } else { None };
             let bytes = wordcraft_engine::io::save_bytes_with(&name, &self.session.doc, password)?;
+            let download_name = match id {
+                "file.save" => if params.get("path").is_some() { format!("saveas-{name}") } else { format!("save-{name}") },
+                "file.saveAs" | "file.exportPdf" | "file.exportPng" => format!("export-{name}"),
+                _ => format!("save-{name}"),
+            };
             if let Some(d) = &self.services.download
-                && let Err(e) = d(&name, &bytes)
+                && let Err(e) = d(&download_name, &bytes)
             {
                 let msg = i18n::fmt(tl!("Couldn't download {name}: {error}"), &[("name", &name), ("error", &e)]);
                 log::error!("download of {name} failed: {e}");

@@ -43,11 +43,12 @@ pub fn title_bar(app: &mut WordApp, ui: &mut Ui) {
     // macOS: shorter, so the system's traffic lights are centred in it; the tallest controls
     // shrink to keep a margin above and below them.
     let mac = app.integrated_titlebar;
-    let left = if mac { MAC_CONTENT_LEFT as i8 } else { 8 };
+    let left = if mac { MAC_CONTENT_LEFT as i8 } else if cfg!(target_arch = "wasm32") { 24 } else { 8 };
+    let right = if cfg!(target_arch = "wasm32") { 24 } else { 10 };
     let control_h = if mac { 22.0 } else { 26.0 };
     egui::Panel::top("title_bar")
         .exact_size(if mac { MAC_TITLE_BAR } else { 38.0 })
-        .frame(egui::Frame::NONE.fill(t.title_bar).inner_margin(egui::Margin { left, right: 10, top: 0, bottom: 0 }))
+        .frame(egui::Frame::NONE.fill(t.title_bar).inner_margin(egui::Margin { left, right, top: 0, bottom: 0 }))
         .show(ui, |ui| {
             let full = ui.max_rect();
             // Drag the window by the title bar (integrated title bar on macOS).
@@ -63,37 +64,38 @@ pub fn title_bar(app: &mut WordApp, ui: &mut Ui) {
             let mut right_start = full.max.x;
             ui.horizontal_centered(|ui| {
                 ui.spacing_mut().item_spacing = vec2(2.0, 0.0);
-                // AutoSave switch: greyed out, with the reason as its tooltip, when AutoSave can't
-                // cover the document (#196, #176); clicking it then offers Save As where that helps.
-                let block = app.autosave_block();
-                let on = app.autosaves();
-                let label = if block.is_some() { t.text_dim.gamma_multiply(0.6) } else { t.text_dim };
-                ui.label(egui::RichText::new(tl!("AutoSave")).font(regular(11.5)).color(label));
-                let (r, resp) = ui.allocate_exact_size(vec2(30.0, 16.0), Sense::click());
-                let (fill, stroke, knob_fill) = match (&block, on) {
-                    (Some(_), _) => (t.input.gamma_multiply(0.5), t.border.gamma_multiply(0.7), t.text_dim.gamma_multiply(0.45)),
-                    (None, true) => (t.accent, t.accent, egui::Color32::WHITE),
-                    (None, false) => (t.input, t.border_strong, t.text_dim),
-                };
-                ui.painter().rect(r, 8.0, fill, Stroke::new(1.0, stroke), egui::StrokeKind::Inside);
-                let knob = if on { r.max.x - 8.0 } else { r.min.x + 8.0 };
-                ui.painter().circle_filled(pos2(knob, r.center().y), 5.0, knob_fill);
-                let tip = block
-                    .as_ref()
-                    .map_or_else(|| tl!("AutoSave saves every change to the file (needs a saved document)").to_string(), |b| b.reason());
-                if resp.on_hover_text(tip).clicked() {
-                    match block {
-                        None => {
-                            let _ = app.run("file.autosave", json!({}));
+                // AutoSave switch: only shown when AutoSave can cover the document (desktop only).
+                if !cfg!(target_arch = "wasm32") && app.services.download.is_none() {
+                    let block = app.autosave_block();
+                    let on = app.autosaves();
+                    let label = if block.is_some() { t.text_dim.gamma_multiply(0.6) } else { t.text_dim };
+                    ui.label(egui::RichText::new(tl!("AutoSave")).font(regular(11.5)).color(label));
+                    let (r, resp) = ui.allocate_exact_size(vec2(30.0, 16.0), Sense::click());
+                    let (fill, stroke, knob_fill) = match (&block, on) {
+                        (Some(_), _) => (t.input.gamma_multiply(0.5), t.border.gamma_multiply(0.7), t.text_dim.gamma_multiply(0.45)),
+                        (None, true) => (t.accent, t.accent, egui::Color32::WHITE),
+                        (None, false) => (t.input, t.border_strong, t.text_dim),
+                    };
+                    ui.painter().rect(r, 8.0, fill, Stroke::new(1.0, stroke), egui::StrokeKind::Inside);
+                    let knob = if on { r.max.x - 8.0 } else { r.min.x + 8.0 };
+                    ui.painter().circle_filled(pos2(knob, r.center().y), 5.0, knob_fill);
+                    let tip = block
+                        .as_ref()
+                        .map_or_else(|| tl!("AutoSave saves every change to the file (needs a saved document)").to_string(), |b| b.reason());
+                    if resp.on_hover_text(tip).clicked() {
+                        match block {
+                            None => {
+                                let _ = app.run("file.autosave", json!({}));
+                            }
+                            // AutoSave comes on once Save As has saved (maybe on a later frame, #94).
+                            Some(b) if b.save_as_helps() => {
+                                let _ = app.save_as(crate::file_dialogs::AfterSave::AutoSave);
+                            }
+                            Some(b) => app.status(b.reason()),
                         }
-                        // AutoSave comes on once Save As has saved (maybe on a later frame, #94).
-                        Some(b) if b.save_as_helps() => {
-                            let _ = app.save_as(crate::file_dialogs::AfterSave::AutoSave);
-                        }
-                        Some(b) => app.status(b.reason()),
                     }
+                    ui.add_space(8.0);
                 }
-                ui.add_space(8.0);
                 qat_button(ui, app, "save", tl!("Save"), "file.save", true);
                 let can_undo = app.session.can_undo();
                 let can_redo = app.session.can_redo();
@@ -109,7 +111,7 @@ pub fn title_bar(app: &mut WordApp, ui: &mut Ui) {
                     ui.painter().text(r.center(), Align2::CENTER_CENTER, initials, semibold(10.5), egui::Color32::WHITE);
                     resp.on_hover_text(format!("{} — set your name in File › Options", app.session.author));
                     ui.add_space(8.0);
-                    if app.ui.show_discord {
+                    if app.ui.show_discord && !cfg!(target_arch = "wasm32") {
                         let (r, resp) = ui.allocate_exact_size(vec2(84.0, 22.0), Sense::click());
                         ui.painter().rect_filled(
                             r,
@@ -195,12 +197,14 @@ pub fn title_bar(app: &mut WordApp, ui: &mut Ui) {
 
 pub fn status_bar(app: &mut WordApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
+    let margin_x = if cfg!(target_arch = "wasm32") { 24 } else { 12 };
+    let bottom = if cfg!(target_arch = "wasm32") { 4 } else { 0 };
     egui::Panel::bottom("status")
-        .exact_size(26.0)
+        .exact_size(if cfg!(target_arch = "wasm32") { 30.0 } else { 26.0 })
         .frame(
             egui::Frame::NONE
                 .fill(t.status_bar)
-                .inner_margin(egui::Margin { left: 12, right: 12, top: 0, bottom: 0 })
+                .inner_margin(egui::Margin { left: margin_x, right: margin_x, top: 0, bottom })
                 .stroke(Stroke::new(1.0, t.border)),
         )
         .show(ui, |ui| {
