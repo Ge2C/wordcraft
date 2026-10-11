@@ -396,10 +396,23 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
     let hovered = ui.rect_contains_pointer(area) && ui.ctx().dragged_id().is_none();
     let notch = crate::scroll::notch_px(app.canvas.scale / PX_PER_PT);
     let opts = ui.ctx().options(|o| o.input_options);
-    let delta = ui.input(|i| app.canvas.wheel.frame(i, &opts, hovered, notch, area.height()));
+    let mut delta = ui.input(|i| app.canvas.wheel.frame(i, &opts, hovered, notch, area.height()));
+    if cfg!(target_arch = "wasm32") && app.canvas.obj_drag.is_none() {
+        let p_delta = ui.input(|i| {
+            if i.pointer.is_decidedly_dragging() && i.pointer.primary_down() {
+                i.pointer.delta()
+            } else {
+                egui::Vec2::ZERO
+            }
+        });
+        if p_delta != egui::Vec2::ZERO {
+            delta += p_delta;
+        }
+    }
     let mut scroll_area = egui::ScrollArea::both()
         .id_salt("canvas_scroll")
         .auto_shrink([false, false])
+        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
         .scroll_source(egui::scroll_area::ScrollSource { mouse_wheel: false, ..Default::default() });
     if delta != egui::Vec2::ZERO {
         let before = app.canvas.scroll_offset;
@@ -1164,12 +1177,14 @@ fn mouse(app: &mut WordApp, ui: &Ui, resp: &egui::Response, rects: &[Rect], layo
             );
         }
     } else if app.canvas.dragging && ui.input(|i| i.pointer.primary_down()) {
-        if let Some(pos) = layout.hit(page, x, y, story)
-            && pos != app.session.sel.focus
-        {
-            app.session.sel.focus = pos;
-            app.session.page_hint = page;
-            app.canvas.caret_visible_since = crate::now_ms();
+        if !cfg!(target_arch = "wasm32") {
+            if let Some(pos) = layout.hit(page, x, y, story)
+                && pos != app.session.sel.focus
+            {
+                app.session.sel.focus = pos;
+                app.session.page_hint = page;
+                app.canvas.caret_visible_since = crate::now_ms();
+            }
         }
         // Auto-scroll near the edges is handled by egui's scroll area drag.
     } else if app.canvas.dragging && ui.input(|i| i.pointer.primary_released()) {

@@ -226,6 +226,23 @@ pub fn status_bar(app: &mut WordApp, ui: &mut Ui) {
                 {
                     let _ = app.run("ui.dialog", json!({"name": "goto"}));
                 }
+                if cfg!(target_arch = "wasm32") {
+                    let total_pages = l.pages.len().max(1);
+                    let prev_btn = ui.add_enabled(
+                        page > 1,
+                        egui::Button::new(egui::RichText::new("▲").size(10.0)).min_size(vec2(22.0, 20.0)),
+                    );
+                    if prev_btn.on_hover_text(tl!("Previous page")).clicked() {
+                        let _ = app.run("edit.goto", json!({"page": page.saturating_sub(1)}));
+                    }
+                    let next_btn = ui.add_enabled(
+                        page < total_pages,
+                        egui::Button::new(egui::RichText::new("▼").size(10.0)).min_size(vec2(22.0, 20.0)),
+                    );
+                    if next_btn.on_hover_text(tl!("Next page")).clicked() {
+                        let _ = app.run("edit.goto", json!({"page": page + 1}));
+                    }
+                }
                 let words = app.cached_word_count();
                 // A selected picture/shape/text box isn't a text selection: show the total.
                 let wtxt = if app.session.sel.is_collapsed() || crate::objects::selected(app).is_some() {

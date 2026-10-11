@@ -395,6 +395,22 @@ pub fn apply(ctx: &egui::Context, appearance: Appearance) {
         s.text_styles.insert(egui::TextStyle::Small, regular(10.5));
         s.text_styles.insert(egui::TextStyle::Heading, semibold(17.0));
         s.interaction.tooltip_delay = 0.45;
+        if cfg!(target_arch = "wasm32") {
+            s.spacing.scroll = egui::style::ScrollStyle {
+                floating: false,
+                bar_width: 18.0,
+                handle_min_length: 48.0,
+                dormant_handle_opacity: 0.85,
+                dormant_background_opacity: 0.35,
+                active_handle_opacity: 0.95,
+                active_background_opacity: 0.50,
+                interact_handle_opacity: 1.0,
+                interact_background_opacity: 0.70,
+                bar_inner_margin: 2.0,
+                bar_outer_margin: 4.0,
+                ..s.spacing.scroll
+            };
+        }
     });
     ctx.options_mut(|o| {
         o.fallback_theme = egui::Theme::Light;
